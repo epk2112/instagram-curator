@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Instagram Post Curator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Syne:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg: #080808;
+  --surface: #111;
+  --card: #161616;
+  --card-hover: #1e1e1e;
+  --border: #252525;
+  --border-light: #333;
+  --accent: #c8a97e;
+  --accent-dim: rgba(200,169,126,.12);
+  --accent-glow: rgba(200,169,126,.06);
+  --danger: #d16060;
+  --danger-dim: rgba(209,96,96,.15);
+  --success: #6fba8a;
+  --success-dim: rgba(111,186,138,.12);
+  --text: #e8e5e0;
+  --text-muted: #666;
+  --text-faint: #444;
+  --radius: 10px;
+  --sans: 'Syne', sans-serif;
+  --serif: 'Cormorant Garamond', serif;
+  --transition: .2s cubic-bezier(.4,0,.2,1);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Grain overlay ─────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+  opacity: .4;
+}
+
+/* ── Top bar ───────────────────────────────────── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(8,8,8,.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  height: 60px;
+  gap: 20px;
+}
+
+.logo {
+  font-family: var(--serif);
+  font-size: 1.4rem;
+  font-weight: 300;
+  color: var(--accent);
+  letter-spacing: .06em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.logo span { font-style: italic; }
+
+.topbar-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.search-wrap {
+  flex: 1;
+  position: relative;
+}
+.search-wrap svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+#search {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px 8px 36px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+#search:focus { border-color: var(--accent); }
+#search::placeholder { color: var(--text-muted); }
+
+.filter-pills { display: flex; gap: 6px; }
+.pill {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.pill:hover { border-color: var(--accent); color: var(--accent); }
+.pill.active { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+
+.topbar-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+/* ── Counters ──────────────────────────────────── */
+.counter-badge {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+.counter-badge .n {
+  font-family: var(--serif);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.counter-badge.excluded .n { color: var(--danger); }
+.counter-badge.kept .n { color: var(--success); }
+
+/* ── Buttons ───────────────────────────────────── */
+.btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all var(--transition);
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-ghost { background: var(--surface); border: 1px solid var(--border); color: var(--text-muted); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn-accent { background: var(--accent); color: #111; }
+.btn-accent:hover { background: #d4b98a; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(200,169,126,.3); }
+.btn-accent:disabled { opacity: .4; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-danger { background: var(--danger-dim); border: 1px solid rgba(209,96,96,.3); color: var(--danger); }
+.btn-danger:hover { background: rgba(209,96,96,.25); }
+
+/* ── Upload zone ───────────────────────────────── */
+#upload-zone {
+  max-width: 700px;
+  margin: 80px auto;
+  padding: 0 24px;
+}
+
+.upload-card {
+  background: var(--surface);
+  border: 2px dashed var(--border-light);
+  border-radius: 16px;
+  padding: 64px 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+.upload-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, var(--accent-glow) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+.upload-card:hover, .upload-card.drag-over {
+  border-color: var(--accent);
+}
+.upload-card:hover::before, .upload-card.drag-over::before { opacity: 1; }
+
+.upload-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  border: 1px solid rgba(200,169,126,.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 24px;
+  color: var(--accent);
+}
+.upload-card h2 {
+  font-family: var(--serif);
+  font-size: 2rem;
+  font-weight: 300;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+.upload-card p {
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 6px;
+}
+.upload-card .hint { font-size: 12px; color: var(--text-faint); margin-top: 20px; }
+
+#file-input { display: none; }
+
+/* Progress */
+.progress-wrap { margin-top: 24px; display: none; }
+.progress-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); border-radius: 2px; width: 0%; transition: width .4s; }
+.progress-label { font-size: 12px; color: var(--text-muted); margin-top: 8px; text-align: center; }
+
+/* ── Main App ──────────────────────────────────── */
+#app { display: none; }
+
+/* ── Toolbar secondary ─────────────────────────── */
+.toolbar {
+  padding: 14px 32px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-wrap: wrap;
+}
+.toolbar-left { display: flex; align-items: center; gap: 8px; flex: 1; }
+.toolbar-right { display: flex; align-items: center; gap: 8px; }
+
+.view-toggle { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.view-btn { padding: 6px 10px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; transition: all var(--transition); display: flex; align-items: center; }
+.view-btn.active { background: var(--accent-dim); color: var(--accent); }
+
+.sort-select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  outline: none;
+  cursor: pointer;
+}
+
+/* ── Grid ──────────────────────────────────────── */
+#grid-container {
+  padding: 24px 32px 80px;
+}
+
+#posts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+#posts-grid.list-view {
+  grid-template-columns: 1fr;
+}
+
+/* ── Post card ─────────────────────────────────── */
+.post-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all var(--transition);
+  position: relative;
+  user-select: none;
+}
+.post-card:hover { background: var(--card-hover); border-color: var(--border-light); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+.post-card.excluded { opacity: .4; border-color: rgba(209,96,96,.3); }
+.post-card.excluded:hover { opacity: .55; border-color: var(--danger); transform: none; box-shadow: none; }
+.post-card.excluded .post-visual::after { content: '✕ EXCLUDED'; position: absolute; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; color: var(--danger); font-family: var(--sans); font-size: 14px; font-weight: 700; letter-spacing: .1em; }
+
+/* list view */
+#posts-grid.list-view .post-card { display: flex; align-items: flex-start; }
+#posts-grid.list-view .post-visual { width: 120px; flex-shrink: 0; aspect-ratio: 1; }
+#posts-grid.list-view .post-body { padding: 14px 16px; flex: 1; }
+
+/* Post visual / carousel */
+.post-visual {
+  position: relative;
+  aspect-ratio: 1;
+  background: #000;
+  overflow: hidden;
+}
+.post-visual img, .post-visual video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: none;
+  pointer-events: none;
+}
+.post-visual img.active, .post-visual video.active { display: block; }
+
+.carousel-ctrl {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0,0,0,.55);
+  border: none;
+  color: #fff;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity var(--transition);
+  z-index: 2;
+}
+.post-visual:hover .carousel-ctrl { opacity: 1; }
+.carousel-ctrl.prev-btn { left: 8px; }
+.carousel-ctrl.next-btn { right: 8px; }
+
+.carousel-dots {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  z-index: 2;
+}
+.cdot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.35);
+  transition: background var(--transition);
+}
+.cdot.active { background: #fff; }
+
+.media-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0,0,0,.65);
+  border-radius: 20px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  letter-spacing: .04em;
+  z-index: 2;
+}
+.video-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(0,0,0,.65);
+  border-radius: 20px;
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 7px;
+  z-index: 2;
+}
+
+/* Checkbox overlay */
+.select-check {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.7);
+  background: rgba(0,0,0,.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+  transition: all var(--transition);
+  font-size: 11px;
+  color: transparent;
+}
+.post-card.excluded .select-check {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+/* Body */
+.post-body { padding: 12px 14px; }
+.post-date { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+.post-caption {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+#posts-grid.list-view .post-caption { -webkit-line-clamp: 3; }
+.post-hashtags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 3px; }
+.post-tag { font-size: 9.5px; color: var(--accent); background: var(--accent-dim); border: 1px solid rgba(200,169,126,.15); border-radius: 20px; padding: 2px 7px; }
+.post-media-count { font-size: 10px; color: var(--text-faint); margin-top: 6px; }
+
+/* no media placeholder */
+.no-media-placeholder {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  background: #111;
+  color: var(--text-faint);
+  font-size: 28px;
+}
+
+/* ── Empty state ───────────────────────────────── */
+.empty {
+  grid-column: 1/-1;
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--text-muted);
+}
+.empty h3 { font-family: var(--serif); font-size: 2rem; font-weight: 300; margin-bottom: 8px; }
+.empty p { font-size: 13px; }
+
+/* ── Export modal ──────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.8);
+  backdrop-filter: blur(8px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition);
+}
+.modal-overlay.open { opacity: 1; pointer-events: auto; }
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  padding: 36px;
+  max-width: 480px;
+  width: 90%;
+  transform: scale(.96);
+  transition: transform var(--transition);
+}
+.modal-overlay.open .modal { transform: scale(1); }
+.modal h2 { font-family: var(--serif); font-size: 2rem; font-weight: 300; margin-bottom: 6px; color: var(--accent); }
+.modal p { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; line-height: 1.6; }
+.modal-field { margin-bottom: 16px; }
+.modal-field label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-bottom: 6px; }
+.modal-field input {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  outline: none;
+}
+.modal-field input:focus { border-color: var(--accent); }
+.modal-summary {
+  background: var(--card);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-muted);
+}
+.modal-summary b { color: var(--text); }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ── Toast ─────────────────────────────────────── */
+#toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 12px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  z-index: 300;
+  opacity: 0;
+  transition: all .3s;
+  pointer-events: none;
+  white-space: nowrap;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.success { border-color: rgba(111,186,138,.4); color: var(--success); }
+#toast.error { border-color: rgba(209,96,96,.4); color: var(--danger); }
+
+/* ── Scrollbar ─────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+
+@media (max-width: 768px) {
+  .topbar { padding: 0 16px; }
+  .filter-pills { display: none; }
+  .topbar-center { max-width: none; }
+  #grid-container { padding: 16px 16px 80px; }
+  #posts-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .toolbar { padding: 10px 16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Top bar ── -->
+<div class="topbar">
+  <div class="logo"><span>instagram</span> curator</div>
+
+  <div class="topbar-center" id="top-search-area" style="display:none">
+    <div class="search-wrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="search" placeholder="Search captions, hashtags…" autocomplete="off" />
+    </div>
+    <div class="filter-pills">
+      <button class="pill active" data-filter="all">All</button>
+      <button class="pill" data-filter="carousel">Carousels</button>
+      <button class="pill" data-filter="single">Single</button>
+      <button class="pill" data-filter="kept">Kept</button>
+      <button class="pill" data-filter="excluded">Excluded</button>
+    </div>
+  </div>
+
+  <div class="topbar-right" id="top-right-area">
+    <div id="counter-total" class="counter-badge" style="display:none">
+      <span class="n" id="n-total">0</span> posts
+    </div>
+    <div id="counter-excluded" class="counter-badge excluded" style="display:none">
+      <span class="n" id="n-excluded">0</span> excluded
+    </div>
+    <div id="counter-kept" class="counter-badge kept" style="display:none">
+      <span class="n" id="n-kept">0</span> kept
+    </div>
+    <button class="btn btn-ghost" id="btn-load-new" style="display:none">↑ New File</button>
+    <button class="btn btn-ghost btn-danger" id="btn-reset-all" style="display:none" title="Restore all excluded posts">Reset</button>
+    <button class="btn btn-accent" id="btn-export" style="display:none">Export ↓</button>
+  </div>
+</div>
+
+<!-- ── Upload zone ── -->
+<div id="upload-zone">
+  <div class="upload-card" id="drop-zone">
+    <div class="upload-icon">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    </div>
+    <h2>Drop your posts.html</h2>
+    <p>Drag & drop your Instagram backup <code>posts.html</code> file<br>or click to browse</p>
+    <p class="hint">File stays local — nothing is uploaded to any server</p>
+    <input type="file" id="file-input" accept=".html,.htm" />
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-label" id="progress-label">Uploading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── App ── -->
+<div id="app">
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <div class="view-toggle">
+        <button class="view-btn active" id="grid-view-btn" title="Grid view">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </button>
+        <button class="view-btn" id="list-view-btn" title="List view">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        </button>
+      </div>
+      <select class="sort-select" id="sort-select">
+        <option value="default">Sort: Default</option>
+        <option value="newest">Newest First</option>
+        <option value="oldest">Oldest First</option>
+        <option value="caption-len">Caption Length</option>
+        <option value="media-count">Most Media</option>
+      </select>
+      <span style="font-size:12px; color:var(--text-faint); margin-left:4px" id="result-count"></span>
+    </div>
+    <div class="toolbar-right">
+      <button class="btn btn-ghost" id="select-all-btn" style="font-size:11px">Select All Visible</button>
+      <button class="btn btn-ghost btn-danger" id="exclude-selected-btn" style="font-size:11px; display:none">Exclude Selected (<span id="sel-count">0</span>)</button>
+    </div>
+  </div>
+
+  <div id="grid-container">
+    <div id="posts-grid"></div>
+  </div>
+</div>
+
+<!-- ── Export modal ── -->
+<div class="modal-overlay" id="export-modal">
+  <div class="modal">
+    <h2>Export Collection</h2>
+    <p>Your curated posts will be packaged as a ZIP file containing structured JSON, all media files, and a standalone viewer.</p>
+    <div class="modal-field">
+      <label>Export Name</label>
+      <input type="text" id="export-name" value="my_instagram_posts" placeholder="my_instagram_posts" />
+    </div>
+    <div class="modal-summary" id="export-summary"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
+      <button class="btn btn-accent" id="modal-confirm">Download ZIP ↓</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ── -->
+<div id="toast"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────
+let allPosts = [];        // parsed from server
+let excluded = new Set(); // post ids
+let selected = new Set(); // for multi-select
+let activeFilter = 'all';
+let activeSort = 'default';
+let query = '';
+let isListView = false;
+let fileKey = '';
+
+// ─── Upload ───────────────────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+
+async function handleFile(file) {
+  if (!file) return;
+  if (!file.name.endsWith('.html') && !file.name.endsWith('.htm')) {
+    return toast('Please select an HTML file', 'error');
+  }
+  showProgress('Uploading…', 20);
+  const fd = new FormData();
+  fd.append('postsFile', file);
+  try {
+    showProgress('Parsing posts…', 60);
+    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    showProgress('Building viewer…', 85);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Upload failed');
+    showProgress('Done!', 100);
+    setTimeout(() => {
+      allPosts = data.posts;
+      fileKey = data.fileKey;
+      excluded.clear();
+      selected.clear();
+      initApp();
+    }, 400);
+  } catch(err) {
+    hideProgress();
+    toast(err.message, 'error');
+  }
+}
+
+function showProgress(label, pct) {
+  document.getElementById('progress-wrap').style.display = 'block';
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-label').textContent = label;
+}
+function hideProgress() { document.getElementById('progress-wrap').style.display = 'none'; }
+
+// ─── App init ─────────────────────────────────────────────────────
+function initApp() {
+  document.getElementById('upload-zone').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('top-search-area').style.display = 'flex';
+  ['counter-total','counter-excluded','counter-kept','btn-load-new','btn-reset-all','btn-export'].forEach(id => {
+    document.getElementById(id).style.display = '';
+  });
+  updateCounters();
+  render();
+  toast(`Loaded ${allPosts.length} posts`, 'success');
+}
+
+// ─── Render ───────────────────────────────────────────────────────
+function getFiltered() {
+  let posts = [...allPosts];
+  // sort
+  if (activeSort === 'newest') posts.sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  else if (activeSort === 'oldest') posts.sort((a,b) => (a.date||'').localeCompare(b.date||''));
+  else if (activeSort === 'caption-len') posts.sort((a,b) => (b.caption||'').length - (a.caption||'').length);
+  else if (activeSort === 'media-count') posts.sort((a,b) => b.media.length - a.media.length);
+
+  // filter
+  posts = posts.filter(p => {
+    if (activeFilter === 'carousel') return p.isCarousel;
+    if (activeFilter === 'single') return !p.isCarousel;
+    if (activeFilter === 'kept') return !excluded.has(p.id);
+    if (activeFilter === 'excluded') return excluded.has(p.id);
+    return true;
+  });
+  // search
+  if (query) {
+    const q = query.toLowerCase();
+    posts = posts.filter(p =>
+      (p.caption||'').toLowerCase().includes(q) ||
+      p.hashtags.some(h => h.toLowerCase().includes(q))
+    );
+  }
+  return posts;
+}
+
+function render() {
+  const grid = document.getElementById('posts-grid');
+  const filtered = getFiltered();
+  document.getElementById('result-count').textContent = `${filtered.length} of ${allPosts.length}`;
+
+  if (!filtered.length) {
+    grid.innerHTML = '<div class="empty"><h3>No posts here</h3><p>Try adjusting your filters or search query.</p></div>';
+    return;
+  }
+
+  grid.innerHTML = filtered.map(p => buildCard(p)).join('');
+
+  // Init carousels
+  grid.querySelectorAll('.post-visual[data-count]').forEach(el => {
+    const count = +el.dataset.count;
+    if (count < 2) return;
+    let cur = 0;
+    const items = el.querySelectorAll('img,video');
+    const dots = el.querySelectorAll('.cdot');
+    function go(n) {
+      items[cur].classList.remove('active'); dots[cur]?.classList.remove('active');
+      cur = (n + count) % count;
+      items[cur].classList.add('active'); dots[cur]?.classList.add('active');
+    }
+    el.querySelector('.prev-btn')?.addEventListener('click', e => { e.stopPropagation(); go(cur-1); });
+    el.querySelector('.next-btn')?.addEventListener('click', e => { e.stopPropagation(); go(cur+1); });
+    dots.forEach((d,i) => d.addEventListener('click', e => { e.stopPropagation(); go(i); }));
+  });
+
+  // Click to toggle exclude
+  grid.querySelectorAll('.post-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const id = card.dataset.id;
+      if (excluded.has(id)) excluded.delete(id);
+      else excluded.add(id);
+      card.classList.toggle('excluded', excluded.has(id));
+      card.querySelector('.select-check').textContent = excluded.has(id) ? '✕' : '';
+      updateCounters();
+    });
+  });
+}
+
+function buildCard(p) {
+  const excl = excluded.has(p.id);
+  const mediaHtml = p.media.length
+    ? p.media.map((m,i) => {
+        const src = m.path;
+        return m.type === 'video'
+          ? `<video class="${i===0?'active':''}" src="${src}" muted playsinline loading="lazy"></video>`
+          : `<img class="${i===0?'active':''}" src="${src}" alt="" loading="lazy" />`;
+      }).join('')
+    : '<div class="no-media-placeholder">📷</div>';
+
+  const dotsHtml = p.media.length > 1
+    ? `<div class="carousel-dots">${p.media.map((_,i)=>`<div class="cdot${i===0?' active':''}"></div>`).join('')}</div>`
+    : '';
+  const arrowsHtml = p.media.length > 1
+    ? `<button class="carousel-ctrl prev-btn">‹</button><button class="carousel-ctrl next-btn">›</button>`
+    : '';
+  const videoBadge = p.media.some(m => m.type==='video') ? `<div class="video-badge">▶</div>` : '';
+  const mediaBadge = p.isCarousel ? `<div class="media-badge">⊞ ${p.media.length}</div>` : '';
+
+  const capText = (p.caption||'').replace(/</g,'&lt;').replace(/\n/g,' ');
+  const tagsHtml = p.hashtags.length
+    ? `<div class="post-hashtags">${p.hashtags.slice(0,8).map(t=>`<span class="post-tag">#${t}</span>`).join('')}</div>`
+    : '';
+
+  return `<div class="post-card${excl?' excluded':''}" data-id="${p.id}">
+    <div class="post-visual" data-count="${p.media.length}">
+      ${mediaHtml}${dotsHtml}${arrowsHtml}${mediaBadge}${videoBadge}
+      <div class="select-check">${excl?'✕':''}</div>
+    </div>
+    <div class="post-body">
+      <div class="post-date">${p.date}</div>
+      <div class="post-caption">${capText.substring(0,280)}</div>
+      ${tagsHtml}
+      ${p.media.length > 1 ? `<div class="post-media-count">${p.media.length} items</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function updateCounters() {
+  document.getElementById('n-total').textContent = allPosts.length;
+  document.getElementById('n-excluded').textContent = excluded.size;
+  document.getElementById('n-kept').textContent = allPosts.length - excluded.size;
+  document.getElementById('btn-export').disabled = (allPosts.length - excluded.size) === 0;
+}
+
+// ─── Controls ─────────────────────────────────────────────────────
+document.querySelectorAll('.pill').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  activeFilter = btn.dataset.filter;
+  render();
+}));
+
+let searchTimer;
+document.getElementById('search').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { query = e.target.value; render(); }, 200);
+});
+
+document.getElementById('sort-select').addEventListener('change', e => {
+  activeSort = e.target.value; render();
+});
+
+document.getElementById('grid-view-btn').addEventListener('click', () => {
+  isListView = false;
+  document.getElementById('posts-grid').classList.remove('list-view');
+  document.getElementById('grid-view-btn').classList.add('active');
+  document.getElementById('list-view-btn').classList.remove('active');
+});
+document.getElementById('list-view-btn').addEventListener('click', () => {
+  isListView = true;
+  document.getElementById('posts-grid').classList.add('list-view');
+  document.getElementById('list-view-btn').classList.add('active');
+  document.getElementById('grid-view-btn').classList.remove('active');
+});
+
+document.getElementById('btn-load-new').addEventListener('click', () => {
+  fileInput.click();
+});
+
+document.getElementById('btn-reset-all').addEventListener('click', () => {
+  excluded.clear(); selected.clear();
+  updateCounters(); render();
+  toast('All posts restored');
+});
+
+document.getElementById('select-all-btn').addEventListener('click', () => {
+  const visible = getFiltered();
+  const allExcluded = visible.every(p => excluded.has(p.id));
+  visible.forEach(p => allExcluded ? excluded.delete(p.id) : excluded.add(p.id));
+  updateCounters(); render();
+  toast(allExcluded ? 'All visible posts restored' : `${visible.length} posts excluded`);
+});
+
+// ─── Export ───────────────────────────────────────────────────────
+document.getElementById('btn-export').addEventListener('click', () => {
+  const kept = allPosts.filter(p => !excluded.has(p.id));
+  const totalMedia = kept.reduce((n,p) => n + p.media.length, 0);
+  document.getElementById('export-summary').innerHTML =
+    `<b>${kept.length}</b> posts kept &nbsp;·&nbsp; <b>${excluded.size}</b> excluded<br>` +
+    `<b>${totalMedia}</b> media files &nbsp;·&nbsp; <b>${kept.filter(p=>p.isCarousel).length}</b> carousels`;
+  document.getElementById('export-modal').classList.add('open');
+});
+
+document.getElementById('modal-cancel').addEventListener('click', () => {
+  document.getElementById('export-modal').classList.remove('open');
+});
+
+document.getElementById('modal-confirm').addEventListener('click', async () => {
+  const name = document.getElementById('export-name').value.trim() || 'instagram_export';
+  const kept = allPosts.filter(p => !excluded.has(p.id));
+  document.getElementById('modal-confirm').textContent = 'Packaging…';
+  document.getElementById('modal-confirm').disabled = true;
+  try {
+    const r = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ posts: kept, outputName: name })
+    });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name + '.zip'; a.click();
+    URL.revokeObjectURL(url);
+    document.getElementById('export-modal').classList.remove('open');
+    toast('Export downloaded successfully!', 'success');
+  } catch(err) {
+    toast(err.message, 'error');
+  } finally {
+    document.getElementById('modal-confirm').textContent = 'Download ZIP ↓';
+    document.getElementById('modal-confirm').disabled = false;
+  }
+});
+
+// click outside modal
+document.getElementById('export-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.remove('open');
+});
+
+// ─── Toast ────────────────────────────────────────────────────────
+function toast(msg, type='') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show ' + type;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.className = '', 3000);
+}
+</script>
+</body>
+</html>

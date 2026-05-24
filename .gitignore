@@ -1,0 +1,9 @@
+node_modules
+exports
+public/media
+
+
+
+dist
+dist-ssr
+*.local
