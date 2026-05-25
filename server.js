@@ -1,13 +1,10 @@
 const express = require('express');
 const multer = require('multer');
 const cheerio = require('cheerio');
-const archiverPkg = require('archiver');
+const archiver = require('archiver');
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
-
-// Fix: Robust interop for archiver to handle CommonJS, ESM namespace objects, and updated exports
-const archiver = typeof archiverPkg === 'function' ? archiverPkg : (archiverPkg.default || archiverPkg.create);
 
 const app = express();
 const PORT = 3000;
@@ -94,6 +91,9 @@ function parsePostsHTML(html) {
 
 //  Routes 
 
+// Store the resolved Instagram data root after upload so export can use it
+let resolvedInstagramRoot = null;
+
 app.post('/api/upload', (req, res) => {
   upload.single('postsFile')(req, res, (multerErr) => {
     if (multerErr) {
@@ -115,6 +115,78 @@ app.post('/api/upload', (req, res) => {
   });
 });
 
+/**
+ * Build a prioritised list of candidate base directories to search for a
+ * media file whose relative path (as it appears in posts.html) is srcRelative.
+ *
+ * Instagram exports always look like:
+ *   <root>/
+ *     your_instagram_activity/
+ *       media/
+ *         posts/
+ *           <date-folder>/
+ *             image.jpg
+ *     content/
+ *       posts_1.html          ← this is what the user uploads
+ *
+ * The hrefs inside posts.html are written relative to the html file itself,
+ * so they look like:  ../media/posts/202501_abc/image.jpg
+ * OR sometimes just:  media/posts/202501_abc/image.jpg
+ *
+ * We try every plausible combination so the copy succeeds regardless of
+ * which Instagram export layout version the user has.
+ */
+function buildCandidatePaths(srcRelative, mediaBasePath) {
+  // Normalise to forward-slashes for consistent splitting/joining
+  const rel = srcRelative.replace(/\\/g, '/').replace(/^\.\.\//, '').replace(/^\/+/, '');
+
+  const bases = new Set();
+
+  // 1. Explicit base provided by the client (most reliable)
+  if (mediaBasePath) {
+    bases.add(mediaBasePath);
+    // Also try one and two levels up from the provided base
+    bases.add(path.join(mediaBasePath, '..'));
+    bases.add(path.join(mediaBasePath, '..', '..'));
+  }
+
+  // 2. Server directory and its parents (covers dev / same-folder setups)
+  bases.add(__dirname);
+  bases.add(path.join(__dirname, '..'));
+  bases.add(path.join(__dirname, '..', '..'));
+  bases.add(path.join(__dirname, '..', '..', '..'));
+
+  // 3. Common Windows user paths for Instagram exports
+  const homedir = process.env.USERPROFILE || process.env.HOME || '';
+  if (homedir) {
+    bases.add(path.join(homedir, 'Downloads'));
+    bases.add(path.join(homedir, 'Documents'));
+    bases.add(path.join(homedir, 'Desktop'));
+  }
+
+  // Build candidate absolute paths.
+  // For each base we also try stripping leading path segments from rel
+  // because the href might include a sub-path that the base already contains.
+  const candidates = [];
+  const relParts = rel.split('/');
+
+  for (const base of bases) {
+    // Full relative path joined to base
+    candidates.push(path.join(base, rel));
+
+    // Strip each leading segment progressively
+    // e.g. rel = "your_instagram_activity/media/posts/x/img.jpg"
+    //   → try base/media/posts/x/img.jpg
+    //   → try base/posts/x/img.jpg
+    //   → try base/x/img.jpg  (too short, skip)
+    for (let i = 1; i < relParts.length - 1; i++) {
+      candidates.push(path.join(base, relParts.slice(i).join('/')));
+    }
+  }
+
+  return candidates;
+}
+
 // Export: zip up selected posts + their media + viewer HTML
 app.post('/api/export', async (req, res) => {
   try {
@@ -127,6 +199,9 @@ app.post('/api/export', async (req, res) => {
     const mediaOut = path.join(exportDir, 'media');
     await fsp.mkdir(mediaOut, { recursive: true });
 
+    let totalCopied = 0;
+    let totalMissing = 0;
+
     // Re-map media paths and attempt to copy files
     const finalPosts = [];
     for (const post of posts) {
@@ -136,24 +211,41 @@ app.post('/api/export', async (req, res) => {
         const destName = `${post.id}_${m.order}${ext}`;
         const destPath = path.join(mediaOut, destName);
 
-        // Try common locations relative to server root
-        const srcRelative = m.path.replace(/^\/+/, '').replace(/\\/g, '/');
-        const candidateBases = [
-          __dirname,
-          path.join(__dirname, '..'),
-          path.join(__dirname, '..', '..'),
+        // Normalise: strip leading slashes/backslashes, convert to OS separator
+        const relClean = m.path.replace(/^[/\\]+/, '').replace(/\//g, path.sep);
+
+        // Candidate locations in priority order:
+        // 1. public/<relClean>  — the correct location given the folder structure
+        // 2. <__dirname>/<relClean>  — fallback if server.js is co-located with media
+        // 3. public/<relClean> with "../" segments stripped — safety net
+        const candidates = [
+          path.join(__dirname, 'public', relClean),
+          path.join(__dirname, relClean),
+          path.join(__dirname, 'public', relClean.replace(/^(\.\.[/\\])+/, '')),
         ];
+
         let copied = false;
-        for (const base of candidateBases) {
-          const src = path.join(base, srcRelative);
-          if (fs.existsSync(src)) {
-            try {
+        for (const src of candidates) {
+          try {
+            if (fs.existsSync(src)) {
               await fsp.copyFile(src, destPath);
               copied = true;
-            } catch (_) {}
-            break;
+              console.log(`  ✓ ${src}`);
+              break;
+            }
+          } catch (copyErr) {
+            console.warn(`  Copy failed ${src}: ${copyErr.message}`);
           }
         }
+
+        if (!copied) {
+          totalMissing++;
+          console.warn(`  ✗ Not found: ${m.path}`);
+          console.warn(`    Tried:\n` + candidates.map(c => `      ${c}`).join('\n'));
+        } else {
+          totalCopied++;
+        }
+
         newMedia.push({
           ...m,
           exportedPath: `media/${destName}`,
@@ -163,6 +255,8 @@ app.post('/api/export', async (req, res) => {
       }
       finalPosts.push({ ...post, media: newMedia });
     }
+
+    console.log(`\nExport summary: ${totalCopied} copied, ${totalMissing} missing\n`);
 
     // Write JSON
     await fsp.writeFile(
@@ -181,10 +275,7 @@ app.post('/api/export', async (req, res) => {
     // Stream zip back
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${outputName}.zip"`);
-    
-    // Archiver is safely invoked here due to the robust definition at the top of the file
     const archive = archiver('zip', { zlib: { level: 6 } });
-    
     archive.on('error', err => { if (!res.headersSent) res.status(500).end(); console.error(err); });
     archive.pipe(res);
     archive.directory(exportDir, false);
@@ -281,7 +372,7 @@ function render(){
         \`<video class="\${i===0?'on':''}" src="\${s}" muted playsinline></video>\`:
         \`<img class="\${i===0?'on':''}" src="\${s}" loading="lazy"/>\`;
     }).join('');
-    const dots=p.media.length>1?'<div class="cnav">'+p.media.length+'</div>':'';
+    const dots=p.media.length>1?'<div class="cnav">'+p.media.map((_,i)=>\`<div class="cdot\${i===0?' on':''}" data-i="\${i}"></div>\`).join('')+'</div>':'';
     const arr=p.media.length>1?'<button class="carr p">&#8249;</button><button class="carr n">&#8250;</button>':'';
     const badge=p.isCarousel?'<div class="mbadge"> '+p.media.length+'</div>':'';
     const cap=(p.caption||'').substring(0,500).replace(/[<>]/g,c=>c==='<'?'&lt;':'&gt;');
