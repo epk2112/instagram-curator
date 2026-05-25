@@ -1,15 +1,18 @@
 const express = require('express');
 const multer = require('multer');
 const cheerio = require('cheerio');
-const archiver = require('archiver');
+const archiverPkg = require('archiver');
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 
+// Fix: Robust interop for archiver to handle CommonJS, ESM namespace objects, and updated exports
+const archiver = typeof archiverPkg === 'function' ? archiverPkg : (archiverPkg.default || archiverPkg.create);
+
 const app = express();
 const PORT = 3000;
 
-// Ensure dirs exist (critical on Windows — multer won't create them)
+// Ensure dirs exist (critical on Windows  multer won't create them)
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const EXPORTS_DIR = path.join(__dirname, 'exports');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -18,13 +21,13 @@ if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Use memory storage — no disk read needed, avoids Windows path issues
+// Use memory storage  no disk read needed, avoids Windows path issues
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 200 * 1024 * 1024 }
 });
 
-// ── Parser ────────────────────────────────────────────────────────────────────
+//  Parser 
 function parsePostsHTML(html) {
   const $ = cheerio.load(html, { decodeEntities: true });
   const posts = [];
@@ -89,7 +92,7 @@ function parsePostsHTML(html) {
   return posts;
 }
 
-// ── Routes ────────────────────────────────────────────────────────────────────
+//  Routes 
 
 app.post('/api/upload', (req, res) => {
   upload.single('postsFile')(req, res, (multerErr) => {
@@ -178,7 +181,10 @@ app.post('/api/export', async (req, res) => {
     // Stream zip back
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${outputName}.zip"`);
+    
+    // Archiver is safely invoked here due to the robust definition at the top of the file
     const archive = archiver('zip', { zlib: { level: 6 } });
+    
     archive.on('error', err => { if (!res.headersSent) res.status(500).end(); console.error(err); });
     archive.pipe(res);
     archive.directory(exportDir, false);
@@ -190,14 +196,14 @@ app.post('/api/export', async (req, res) => {
   }
 });
 
-// ── Viewer HTML ───────────────────────────────────────────────────────────────
+//  Viewer HTML 
 function generateViewerHTML(posts, title) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>${escHtml(title)} — Archive Viewer</title>
+<title>${escHtml(title)}  Archive Viewer</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
 <style>
 :root{--bg:#0a0a0a;--surface:#141414;--card:#1c1c1c;--border:#2a2a2a;--accent:#e8c07d;--accent2:#c9a85c;--text:#f0ede8;--muted:#777;--r:12px}
@@ -250,7 +256,7 @@ header p{color:var(--muted);margin-top:8px;font-size:13px}
   </div>
 </header>
 <div class="controls">
-  <input class="search" id="s" placeholder="Search captions or hashtags…"/>
+  <input class="search" id="s" placeholder="Search captions or hashtags"/>
   <button class="fbtn active" data-f="all">All</button>
   <button class="fbtn" data-f="carousel">Carousels</button>
   <button class="fbtn" data-f="single">Single</button>
@@ -275,9 +281,9 @@ function render(){
         \`<video class="\${i===0?'on':''}" src="\${s}" muted playsinline></video>\`:
         \`<img class="\${i===0?'on':''}" src="\${s}" loading="lazy"/>\`;
     }).join('');
-    const dots=p.media.length>1?'<div class="cnav">'+p.media.map((_,i)=>\`<div class="cdot\${i===0?' on':''}" data-i="\${i}"></div>\`).join('')+'</div>':'';
+    const dots=p.media.length>1?'<div class="cnav">'+p.media.length+'</div>':'';
     const arr=p.media.length>1?'<button class="carr p">&#8249;</button><button class="carr n">&#8250;</button>':'';
-    const badge=p.isCarousel?'<div class="mbadge">⊞ '+p.media.length+'</div>':'';
+    const badge=p.isCarousel?'<div class="mbadge"> '+p.media.length+'</div>':'';
     const cap=(p.caption||'').substring(0,500).replace(/[<>]/g,c=>c==='<'?'&lt;':'&gt;');
     const tags=p.hashtags.length?'<div class="tags">'+p.hashtags.slice(0,10).map(t=>'<span class="tag">#'+t+'</span>').join('')+'</div>':'';
     return \`<div class="card"><div class="vis">\${med}\${dots}\${arr}\${badge}</div><div class="body"><div class="date">\${p.date}</div>\${cap?'<div class="cap">'+cap+'</div><span class="more">Read more</span>':''}\${tags}</div></div>\`;
@@ -311,5 +317,5 @@ function escHtml(s) {
 }
 
 app.listen(PORT, () => {
-  console.log(`\n🎞  Instagram Curator running → http://localhost:${PORT}\n`);
+  console.log(`\n  Instagram Curator running  http://localhost:${PORT}\n`);
 });
