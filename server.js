@@ -15,16 +15,16 @@ const EXPORTS_DIR = path.join(__dirname, 'exports');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '200mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Use memory storage  no disk read needed, avoids Windows path issues
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 200 * 1024 * 1024 }
+  limits: { fileSize: 200 * 1024 * 1024 } // 200MB limit
 });
 
-//  Parser 
+//  Parser for HTML files
 function parsePostsHTML(html) {
   const $ = cheerio.load(html, { decodeEntities: true });
   const posts = [];
@@ -36,18 +36,17 @@ function parsePostsHTML(html) {
     let caption = '';
     const firstMediaTd = block.find('td._2piu._a6_r').first();
     if (firstMediaTd.length) {
-      // The div right after the <a> img contains the caption text
       const capDiv = firstMediaTd.find('div').filter((_, d) => {
         return $(d).find('img').length === 0 && $(d).text().trim().length > 0;
       }).first();
       caption = capDiv.text().trim();
     }
 
-    // Date: last ._a6-o element
+    // Date
     const dateEl = block.find('._a6-o').last();
     const date = dateEl.text().trim();
 
-    // Media: all linked images/videos
+    // Media
     const media = [];
     const seen = new Set();
     block.find('a[href]').each((_, a) => {
@@ -89,10 +88,96 @@ function parsePostsHTML(html) {
   return posts;
 }
 
-//  Routes 
+// Parser for JSON files (posts.json / posts_1.json)
+function parsePostsJSON(jsonString) {
+  const rawData = JSON.parse(jsonString);
+  // Handle whether the root is an array or wrapped in an object
+  const postsArray = Array.isArray(rawData) ? rawData : (rawData.posts || rawData.items || [rawData]);
+  const posts = [];
 
-// Store the resolved Instagram data root after upload so export can use it
-let resolvedInstagramRoot = null;
+  postsArray.forEach((rawPost, i) => {
+    let caption = '';
+    let timestamp = rawPost.creation_timestamp || rawPost.timestamp || 0;
+
+    // 1. Deep-search for Caption 
+    // Posts.json uses `{label: "Caption", value: "..."}` deeply nested, posts_1 uses `title`
+    if (rawPost.title && typeof rawPost.title === 'string' && rawPost.title.trim().length > 0) {
+      caption = rawPost.title;
+    } else {
+      function extractCaption(obj) {
+        if (caption) return; // Stop if already found
+        if (!obj) return;
+        if (obj.label === 'Caption' && obj.value && typeof obj.value === 'string') {
+          caption = obj.value;
+          return;
+        }
+        if (Array.isArray(obj)) {
+          obj.forEach(extractCaption);
+        } else if (typeof obj === 'object') {
+          Object.values(obj).forEach(extractCaption);
+        }
+      }
+      extractCaption(rawPost);
+    }
+
+    // 2. Deep-search for Media URIs
+    const uris = new Set();
+    function findUris(obj) {
+      if (!obj) return;
+      if (Array.isArray(obj)) {
+        obj.forEach(findUris);
+      } else if (typeof obj === 'object') {
+        // Find valid media paths
+        if (obj.uri && typeof obj.uri === 'string' && /\.(jpg|jpeg|png|gif|webp|mp4|mov)$/i.test(obj.uri)) {
+          uris.add(obj.uri);
+        }
+        Object.values(obj).forEach(findUris);
+      }
+    }
+    findUris(rawPost);
+
+    const media = Array.from(uris).map((uri, index) => ({
+      order: index + 1,
+      path: uri,
+      type: /\.(mp4|mov)$/i.test(uri) ? 'video' : 'image'
+    }));
+
+    // 3. Extract Hashtags directly from the caption text
+    const hashtags = [];
+    const tagRegex = /#([a-zA-Z0-9_]+)/g;
+    let match;
+    while ((match = tagRegex.exec(caption)) !== null) {
+      if (!hashtags.includes(match[1])) {
+        hashtags.push(match[1]);
+      }
+    }
+
+    // 4. Format Date
+    let dateStr = '';
+    if (timestamp) {
+      // Ensure timestamp is in ms (Instagram usually provides seconds)
+      const tsMs = timestamp.toString().length <= 10 ? timestamp * 1000 : timestamp;
+      const d = new Date(tsMs);
+      dateStr = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    if (media.length > 0 || caption.trim().length > 0) {
+      posts.push({
+        id: `post_json_${i + 1}`,
+        index: i,
+        caption: caption.trim(),
+        date: dateStr,
+        isCarousel: media.length > 1,
+        media,
+        hashtags
+      });
+    }
+  });
+
+  return posts;
+}
+
+//  Routes 
 
 app.post('/api/upload', (req, res) => {
   upload.single('postsFile')(req, res, (multerErr) => {
@@ -103,10 +188,21 @@ app.post('/api/upload', (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file received' });
     }
+
     try {
-      const html = req.file.buffer.toString('utf-8');
-      const posts = parsePostsHTML(html);
-      console.log(`Parsed ${posts.length} posts`);
+      const filename = req.file.originalname.toLowerCase();
+      const fileString = req.file.buffer.toString('utf-8');
+      
+      let posts = [];
+      if (filename.endsWith('.json')) {
+        posts = parsePostsJSON(fileString);
+      } else if (filename.endsWith('.html') || filename.endsWith('.htm')) {
+        posts = parsePostsHTML(fileString);
+      } else {
+        throw new Error('Unsupported file type. Please upload an HTML or JSON file.');
+      }
+
+      console.log(`Parsed ${posts.length} posts from ${filename}`);
       res.json({ posts, total: posts.length });
     } catch (parseErr) {
       console.error('Parse error:', parseErr);
@@ -115,48 +211,23 @@ app.post('/api/upload', (req, res) => {
   });
 });
 
-/**
- * Build a prioritised list of candidate base directories to search for a
- * media file whose relative path (as it appears in posts.html) is srcRelative.
- *
- * Instagram exports always look like:
- *   <root>/
- *     your_instagram_activity/
- *       media/
- *         posts/
- *           <date-folder>/
- *             image.jpg
- *     content/
- *       posts_1.html          ← this is what the user uploads
- *
- * The hrefs inside posts.html are written relative to the html file itself,
- * so they look like:  ../media/posts/202501_abc/image.jpg
- * OR sometimes just:  media/posts/202501_abc/image.jpg
- *
- * We try every plausible combination so the copy succeeds regardless of
- * which Instagram export layout version the user has.
- */
-function buildCandidatePaths(srcRelative, mediaBasePath) {
-  // Normalise to forward-slashes for consistent splitting/joining
-  const rel = srcRelative.replace(/\\/g, '/').replace(/^\.\.\//, '').replace(/^\/+/, '');
 
+// Media candidate base path logic
+function buildCandidatePaths(srcRelative, mediaBasePath) {
+  const rel = srcRelative.replace(/\\/g, '/').replace(/^\.\.\//, '').replace(/^\/+/, '');
   const bases = new Set();
 
-  // 1. Explicit base provided by the client (most reliable)
   if (mediaBasePath) {
     bases.add(mediaBasePath);
-    // Also try one and two levels up from the provided base
     bases.add(path.join(mediaBasePath, '..'));
     bases.add(path.join(mediaBasePath, '..', '..'));
   }
 
-  // 2. Server directory and its parents (covers dev / same-folder setups)
   bases.add(__dirname);
   bases.add(path.join(__dirname, '..'));
   bases.add(path.join(__dirname, '..', '..'));
   bases.add(path.join(__dirname, '..', '..', '..'));
 
-  // 3. Common Windows user paths for Instagram exports
   const homedir = process.env.USERPROFILE || process.env.HOME || '';
   if (homedir) {
     bases.add(path.join(homedir, 'Downloads'));
@@ -164,21 +235,11 @@ function buildCandidatePaths(srcRelative, mediaBasePath) {
     bases.add(path.join(homedir, 'Desktop'));
   }
 
-  // Build candidate absolute paths.
-  // For each base we also try stripping leading path segments from rel
-  // because the href might include a sub-path that the base already contains.
   const candidates = [];
   const relParts = rel.split('/');
 
   for (const base of bases) {
-    // Full relative path joined to base
     candidates.push(path.join(base, rel));
-
-    // Strip each leading segment progressively
-    // e.g. rel = "your_instagram_activity/media/posts/x/img.jpg"
-    //   → try base/media/posts/x/img.jpg
-    //   → try base/posts/x/img.jpg
-    //   → try base/x/img.jpg  (too short, skip)
     for (let i = 1; i < relParts.length - 1; i++) {
       candidates.push(path.join(base, relParts.slice(i).join('/')));
     }
@@ -186,6 +247,7 @@ function buildCandidatePaths(srcRelative, mediaBasePath) {
 
   return candidates;
 }
+
 
 // Export: zip up selected posts + their media + viewer HTML
 app.post('/api/export', async (req, res) => {
@@ -202,7 +264,6 @@ app.post('/api/export', async (req, res) => {
     let totalCopied = 0;
     let totalMissing = 0;
 
-    // Re-map media paths and attempt to copy files
     const finalPosts = [];
     for (const post of posts) {
       const newMedia = [];
@@ -211,13 +272,8 @@ app.post('/api/export', async (req, res) => {
         const destName = `${post.id}_${m.order}${ext}`;
         const destPath = path.join(mediaOut, destName);
 
-        // Normalise: strip leading slashes/backslashes, convert to OS separator
         const relClean = m.path.replace(/^[/\\]+/, '').replace(/\//g, path.sep);
 
-        // Candidate locations in priority order:
-        // 1. public/<relClean>  — the correct location given the folder structure
-        // 2. <__dirname>/<relClean>  — fallback if server.js is co-located with media
-        // 3. public/<relClean> with "../" segments stripped — safety net
         const candidates = [
           path.join(__dirname, 'public', relClean),
           path.join(__dirname, relClean),
@@ -230,7 +286,7 @@ app.post('/api/export', async (req, res) => {
             if (fs.existsSync(src)) {
               await fsp.copyFile(src, destPath);
               copied = true;
-              console.log(`  ✓ ${src}`);
+              console.log(`   ${src}`);
               break;
             }
           } catch (copyErr) {
@@ -240,8 +296,7 @@ app.post('/api/export', async (req, res) => {
 
         if (!copied) {
           totalMissing++;
-          console.warn(`  ✗ Not found: ${m.path}`);
-          console.warn(`    Tried:\n` + candidates.map(c => `      ${c}`).join('\n'));
+          console.warn(`   Not found: ${m.path}`);
         } else {
           totalCopied++;
         }
@@ -258,21 +313,18 @@ app.post('/api/export', async (req, res) => {
 
     console.log(`\nExport summary: ${totalCopied} copied, ${totalMissing} missing\n`);
 
-    // Write JSON
     await fsp.writeFile(
       path.join(exportDir, 'posts.json'),
       JSON.stringify(finalPosts, null, 2),
       'utf-8'
     );
 
-    // Write standalone viewer
     await fsp.writeFile(
       path.join(exportDir, 'viewer.html'),
       generateViewerHTML(finalPosts, outputName),
       'utf-8'
     );
 
-    // Stream zip back
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${outputName}.zip"`);
     const archive = archiver('zip', { zlib: { level: 6 } });
@@ -287,7 +339,7 @@ app.post('/api/export', async (req, res) => {
   }
 });
 
-//  Viewer HTML 
+//  Viewer HTML Template
 function generateViewerHTML(posts, title) {
   return `<!DOCTYPE html>
 <html lang="en">

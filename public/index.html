@@ -588,10 +588,10 @@ body::before {
     <div class="upload-icon">
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
     </div>
-    <h2>Drop your posts.html</h2>
-    <p>Drag & drop your Instagram backup <code>posts.html</code> file<br>or click to browse</p>
+    <h2>Drop your posts.html or posts.json</h2>
+    <p>Drag & drop your Instagram backup <code>posts.html</code> or <code>posts.json</code> file<br>or click to browse</p>
     <p class="hint">File stays local — nothing is uploaded to any server</p>
-    <input type="file" id="file-input" accept=".html,.htm" />
+    <input type="file" id="file-input" accept=".html,.htm,.json" />
     <div class="progress-wrap" id="progress-wrap">
       <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
       <div class="progress-label" id="progress-label">Uploading…</div>
@@ -674,8 +674,8 @@ fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
 
 async function handleFile(file) {
   if (!file) return;
-  if (!file.name.endsWith('.html') && !file.name.endsWith('.htm')) {
-    return toast('Please select an HTML file', 'error');
+  if (!file.name.endsWith('.html') && !file.name.endsWith('.htm') && !file.name.endsWith('.json')) {
+    return toast('Please select an HTML or JSON file', 'error');
   }
   showProgress('Uploading…', 20);
   const fd = new FormData();
